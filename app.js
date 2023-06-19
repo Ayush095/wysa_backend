@@ -7,6 +7,11 @@ const app = express();
 const port = process.env.PORT || 8000;
 const cors = require("cors");
 
+const bcrypt = require("bcrypt");
+const jwt = require('jsonwebtoken');
+
+const requireAuth = require("./middleware/requireAuth");
+
 const db = require("./config/mongoose");
 
 app.use(express.urlencoded());
@@ -17,7 +22,7 @@ app.get("/", async(req, res)=> {
     res.send({"Message": "This is working"});
 })
 
-app.get('/page/:num', async (req, res) => {
+app.get('/page/:num', requireAuth,  async (req, res) => {
     const content = await Content.findOne({pageNumber: req.params.num});
     try {
         if (content) {
@@ -34,32 +39,47 @@ app.get('/page/:num', async (req, res) => {
 });
 
 
+function createToken(userEmail) {
+    const token = jwt.sign(
+        {
+            email: userEmail
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        { expiresIn: '3d' }
+    )
+    return token;
+}
+
 app.post("/user", async (req, res) => {
-    const response = await User.findOne({email: req.body.email});
-    if(response){
-        if(response.password==req.body.password){
-            res.status(201).json({ "Message": "You are login successfully"});
-        }else {
-            res.status(401).json({ "Message": "You are already register, type right passwword"});
+    const { email, password } = await req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const response = await User.findOne({ email: req.body.email });
+    if (response) {
+        const match = await bcrypt.compare(password, response.password);
+        if (match) {
+            const token = createToken(response.email)
+            res.status(201).json({ "Message": "You are login successfully", jwtToken: token });
+        } else {
+            res.status(401).json({ "Message": "You are already register, type right passwword" });
         }
-    }else {
+    } else {
         try {
             await User.create({
-                email: req.body.email,
-                password: req.body.password,
+                email,
+                password: hashedPassword,
                 sleepProblem: "",
                 bedTime: "",
                 getUpTime: "",
             })
-            res.status(201).json({ "Message": "Successfully insert the data" });
+            const token = createToken(email);
+            res.status(201).json({ "Message": "Successfully insert the data", jwtToken: token });
         } catch (err) {
-            console.log(err)
             res.status(401).json({ "Message": "Not able to post data" });
         }
     }
 });
 
-app.post("/user/page/:num", async (req, res) => {
+app.post("/user/page/:num", requireAuth, async (req, res) => {
     const page = req.params.num;
     try {
         if (page == '1') {
@@ -85,7 +105,6 @@ app.post("/insert-data/Page/:id", async (req, res) => {
         })
         res.status(201).json({ "Message": "Successfully insert the data" });
     } catch (err) {
-        console.log(err)
         res.status(401).json({ "Message": "Not able to post data" });
     }
 })
